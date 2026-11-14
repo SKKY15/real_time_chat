@@ -1,0 +1,81 @@
+name: CI
+
+on: push
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Analyze and test (Flutter ${{ matrix.flutter }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest supported release and the newest stable one.
+        flutter: ['3.47.9', '3.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ matrix.flutter }}
+          cache: true
+
+      - name: Firebase options
+        run: |
+          [ -f lib/firebase_options.dart ] ||
+            cp .github/firebase_options.stub lib/firebase_options.dart
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      # Checked with one formatter only, and not on the generated Firebase
+      # options.
+      - name: Check formatting
+        if: matrix.flutter == '3.x'
+        run: |
+          git ls-files 'lib/*.dart' 'test/*.dart' |
+            grep -v '^lib/firebase_options\.dart$' |
+            xargs dart format --output=none --set-exit-if-changed
+
+      - run: flutter test
+
+  emulator:
+    name: Firestore code and security rules (emulators)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Firebase options
+        run: |
+          [ -f lib/firebase_options.dart ] ||
+            cp .github/firebase_options.stub lib/firebase_options.dart
+
+      - run: npm install --global firebase-tools@15
+
+      - run: flutter pub get
+
+      - name: Emulator tests
+        run: >
+          firebase emulators:exec --only auth,firestore
+          --project demo-real-time-chat
+          "flutter test --platform chrome test/emulator"

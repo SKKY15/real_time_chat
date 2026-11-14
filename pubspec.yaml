@@ -1,0 +1,44 @@
+name: real_time_chat
+description: "Real-time group chat built with Flutter, Riverpod and Firebase."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  # Material moved out of the framework into the material_ui package, which
+  # needs Flutter 3.47 (Dart 3.13) or newer.
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_ui: ^1.11.0
+
+  # Firebase
+  firebase_core: ^5.1.0
+  firebase_auth: ^7.0.1
+  cloud_firestore: ^7.1.0
+
+  # State management
+  flutter_riverpod: ^3.5.0
+
+  # UI
+  google_fonts: ^9.0.0
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # Only for test/emulator, which runs in Chrome and has to register the
+  # web implementations of the Firebase plugins itself. `any`: the versions
+  # are the ones the plugins above already depend on.
+  flutter_web_plugins:
+    sdk: flutter
+  firebase_core_web: any
+  firebase_auth_web: any
+  cloud_firestore_web: any
+
+flutter:
+  uses-material-design: true

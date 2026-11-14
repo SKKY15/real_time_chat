@@ -1,0 +1,9 @@
+// Stand-in for lib/firebase_options.dart, which `flutterfire configure`
+// generates. The CI workflow copies it into place when the real file is not
+// part of the repository, so that the project compiles.
+import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+
+class DefaultFirebaseOptions {
+  static FirebaseOptions get currentPlatform =>
+      throw UnsupportedError('Run `flutterfire configure`.');
+}

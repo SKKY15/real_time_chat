@@ -1,0 +1,161 @@
+rules_version = '2';
+
+// Security rules for the chat.
+//
+//   rooms/{roomId}/messages/{messageId}
+//     text, senderId, senderName, createdAt, editedAt, deleted,
+//     replyTo {messageId, text, senderName}, seenBy [uid]
+//   rooms/{roomId}/typing/{userId}
+//     name, updatedAt
+//
+// In short:
+//   * everything requires a signed-in (anonymous) user,
+//   * a message can only be created in your own name, stamped by the server,
+//   * only the author can edit or delete (soft delete) a message,
+//   * everybody else can change exactly one thing: add their own uid to
+//     `seenBy`,
+//   * a typing document can only be written by the user it belongs to.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /rooms/{roomId} {
+
+      // ---------------------------------------------------------- messages
+      match /messages/{messageId} {
+        allow read: if signedIn();
+
+        allow create: if signedIn() && (isNewMessage() || isDemoMessage());
+
+        allow update: if signedIn()
+          && (isEditByAuthor() || isDeleteByAuthor() || isReadReceipt());
+
+        // Messages are never removed, only flagged as deleted, so every
+        // client can show "This message was deleted".
+        allow delete: if false;
+
+        function changedKeys() {
+          return request.resource.data.diff(resource.data).affectedKeys();
+        }
+
+        function isReplyOrNull(reply) {
+          return reply == null
+            || (reply is map
+              && reply.keys().hasOnly(['messageId', 'text', 'senderName'])
+              && reply.messageId is string
+              && reply.text is string
+              && reply.text.size() <= 200
+              && reply.senderName is string
+              && reply.senderName.size() <= 40);
+        }
+
+        // Field types and sizes every message must respect.
+        function hasMessageShape(data) {
+          return data.keys().hasAll([
+              'text', 'senderId', 'senderName', 'createdAt',
+              'editedAt', 'deleted', 'replyTo', 'seenBy'
+            ])
+            && data.text is string
+            && data.text.size() <= 10000
+            && data.senderId is string
+            && data.senderName is string
+            && data.senderName.size() > 0
+            && data.senderName.size() <= 40
+            && data.createdAt is timestamp
+            && (data.editedAt == null || data.editedAt is timestamp)
+            && data.deleted is bool
+            && isReplyOrNull(data.replyTo)
+            && data.seenBy is list;
+        }
+
+        // A regular new message: mine, not empty, timestamped by the server,
+        // not edited, not deleted, seen by nobody yet.
+        function isNewMessage() {
+          let data = request.resource.data;
+          return data.keys().hasOnly([
+              'text', 'senderId', 'senderName', 'createdAt',
+              'editedAt', 'deleted', 'replyTo', 'seenBy'
+            ])
+            && hasMessageShape(data)
+            && data.senderId == request.auth.uid
+            && data.text.size() > 0
+            && data.createdAt == request.time
+            && data.editedAt == null
+            && data.deleted == false
+            && data.seenBy.size() == 0;
+        }
+
+        // The author changes the text. `editedAt` must be the server time.
+        function isEditByAuthor() {
+          let data = request.resource.data;
+          return resource.data.senderId == request.auth.uid
+            && resource.data.deleted == false
+            && changedKeys().hasOnly(['text', 'editedAt'])
+            && data.text is string
+            && data.text.size() > 0
+            && data.text.size() <= 10000
+            && data.editedAt == request.time;
+        }
+
+        // The author deletes the message for everyone: the content is wiped
+        // and the flag is set.
+        function isDeleteByAuthor() {
+          let data = request.resource.data;
+          return resource.data.senderId == request.auth.uid
+            && changedKeys().hasOnly(['deleted', 'text', 'replyTo'])
+            && data.deleted == true
+            && data.text == ''
+            && data.replyTo == null;
+        }
+
+        // Anyone may add their own uid to `seenBy`, and nothing else.
+        function isReadReceipt() {
+          let before = resource.data.seenBy;
+          let after = request.resource.data.seenBy;
+          return changedKeys().hasOnly(['seenBy'])
+            && after is list
+            && after.size() <= before.size() + 1
+            && after.hasAll(before)
+            && after.toSet().difference(before.toSet())
+                 .hasOnly([request.auth.uid]);
+        }
+
+        // DEMO ONLY - delete this function (and its use in `allow create`)
+        // before going to production.
+        //
+        // Lets the in-app "Add 40 sample messages" action write its scripted
+        // conversation: documents flagged `demo: true` may be backdated and
+        // may be sent in the name of the fictional `demo_*` participants.
+        function isDemoMessage() {
+          let data = request.resource.data;
+          return data.keys().hasOnly([
+              'text', 'senderId', 'senderName', 'createdAt',
+              'editedAt', 'deleted', 'replyTo', 'seenBy', 'demo'
+            ])
+            && hasMessageShape(data)
+            && data.get('demo', false) == true
+            && (data.senderId == request.auth.uid
+              || data.senderId.matches('demo_.*'))
+            && data.createdAt <= request.time;
+        }
+      }
+
+      // ------------------------------------------------- typing indicator
+      match /typing/{userId} {
+        allow read: if signedIn();
+
+        allow create, update: if signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['name', 'updatedAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() <= 40
+          && request.resource.data.updatedAt == request.time;
+
+        allow delete: if signedIn() && request.auth.uid == userId;
+      }
+    }
+  }
+}
